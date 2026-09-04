@@ -47,7 +47,9 @@ type transports struct {
 	auth  userv1.AuthServiceClient
 }
 
-func newTransports(t *testing.T, users *apptest.FakeUsers, auth *apptest.FakeAuth, tokens apptest.Verifier) transports {
+// newTransports takes the ports rather than the fakes themselves, so the same wiring serves both this file's
+// preconfigured doubles and validation_test.go's real use cases.
+func newTransports(t *testing.T, users app.UserUseCase, auth app.AuthUseCase, tokens app.TokenVerifier) transports {
 	t.Helper()
 
 	rest := httpapi.NewRouter(httpapi.Deps{Users: users, Auth: auth, Tokens: tokens, Logger: apptest.DiscardLogger()})
