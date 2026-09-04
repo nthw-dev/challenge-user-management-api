@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    name: lint + unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.1"
+          cache: true
+
+      - name: gofmt
+        run: make fmt-check
+      - name: go.mod and go.sum are tidy
+        run: make tidy-check
+
+      # No tag = the production binary, which must compile without grpcui; -tags dev = every file.
+      - run: go build ./... && go vet ./...
+      - run: go vet -tags dev ./...
+      - name: the production binary builds the way the Dockerfile builds it
+        run: make build
+
+      # The version is pinned to the one the repo is developed against, so a new default linter cannot fail main out of nowhere.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+
+      # The generated protobuf code is committed; regenerate with the pinned plugins and refuse a drift.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - name: protobuf code is in sync with the .proto files
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          buf lint
+          buf generate
+          git diff --exit-code internal/adapter/inbound/grpc/gen
+
+      # The mockery mocks are committed too; regenerate with the pinned version and refuse a drift.
+      - name: the mocks are in sync with the ports in internal/app/ports.go
+        run: |
+          go install github.com/vektra/mockery/v3@v3.7.4
+          mockery
+          git diff --exit-code internal/app/apptest/mocks
+
+      - name: known vulnerabilities in dependencies
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.27.1"
+          go-package: ./...
+
+      - run: go test -race -tags dev -covermode=atomic -coverpkg=./internal/... -coverprofile=cover.out ./...
+      - run: go tool cover -func=cover.out | tail -n 1
+      - name: the core stays above the coverage bar
+        run: ./scripts/check-coverage.sh cover.out 80
+
+  integration:
+    name: integration test
+    # The runner already provides Docker, so testcontainers works out of the box.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.1"
+          cache: true
+
+      - run: go test -tags=integration -count=1 ./test/...
+
+  image:
+    name: build image
+    needs: [quality, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build --build-arg VERSION=${{ github.sha }} -t user-management-api:${{ github.sha }} .
