@@ -1,0 +1,16 @@
+<div class="guide">
+  <h2>{{ .Title }}</h2>
+  {{ with .Intro }}<p class="guide-intro">{{ md . }}</p>{{ end }}
+  {{ with .Steps }}
+  <ol>
+    {{ range . }}<li>{{ if .Title }}<b>{{ .Title }}</b> — {{ end }}{{ md .Body }}</li>
+    {{ end }}
+  </ol>
+  {{ end }}
+  {{ with .Notes }}
+  <ul class="guide-notes">
+    {{ range . }}<li>{{ md . }}</li>
+    {{ end }}
+  </ul>
+  {{ end }}
+</div>
