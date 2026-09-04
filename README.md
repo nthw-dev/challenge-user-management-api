@@ -2,8 +2,11 @@
 
 A user-management REST API in Go — MongoDB, JWT (HS256), hexagonal layout, with a gRPC adapter on the same core.
 
-Built against [challenge-user-management-api.md](challenge-user-management-api.md); every requirement is answered
-one by one in **[checklist.md](checklist.md)**.
+This is **Part 1** of [backend-challenge](https://github.com/7-solutions/backend-challenge)
+— the User Management API section, a build exercise. Author: **[Natthawat Narin](https://nthw-dev.vercel.app/)**.
+
+The challenge as received is [challenge-user-management-api.md](challenge-user-management-api.md); every
+requirement in it is answered one by one in **[checklist.md](checklist.md)**.
 
 ---
 
@@ -177,6 +180,14 @@ make test-grpc     the same over gRPC (needs grpcurl)
 | [docs/testing.md](docs/testing.md) | The four test tiers, coverage, and where the mocking boundary sits |
 | [docs/design-decisions.md](docs/design-decisions.md) | Assumptions, decisions, and what was deliberately left out |
 | [docs/dependencies.md](docs/dependencies.md) | Every dependency, its version, why it was chosen and what it was picked over |
+
+---
+
+## The other part
+
+**Part 2** of the same challenge — the Lottery Search System, a design exercise with no code required —
+is in a separate repository:
+**[github.com/nthw-dev/challenge-lottery-search-system](https://github.com/nthw-dev/challenge-lottery-search-system)**.
 
 ---
 
