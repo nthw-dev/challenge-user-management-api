@@ -1,0 +1,513 @@
+definitions:
+  httpapi.createUserRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+    type: object
+  httpapi.listMeta:
+    properties:
+      has_more:
+        type: boolean
+      limit:
+        type: integer
+      next_cursor:
+        type: string
+    type: object
+  httpapi.loginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  httpapi.refreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    type: object
+  httpapi.sessionResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+      user:
+        $ref: '#/definitions/httpapi.userResponse'
+    type: object
+  httpapi.updateUserRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+    type: object
+  httpapi.userResponse:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  respond.DataEnvelope:
+    properties:
+      data: {}
+      meta: {}
+    type: object
+  respond.ErrorBody:
+    properties:
+      code:
+        type: string
+      details:
+        items:
+          $ref: '#/definitions/respond.FieldIssue'
+        type: array
+      message:
+        type: string
+    type: object
+  respond.ErrorEnvelope:
+    properties:
+      error:
+        $ref: '#/definitions/respond.ErrorBody'
+      request_id:
+        type: string
+    type: object
+  respond.FieldIssue:
+    properties:
+      field:
+        type: string
+      issue:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: |-
+    ### Authorization
+    `/api/v1/users/*` requires a token; `/api/v1/auth/*`, `/healthz`, `/readyz` and `/metrics` do not (see the padlock icon at the end of each row)
+
+    1. `POST /api/v1/auth/register` (if no user exists yet) → `POST /api/v1/auth/login` → copy `data.access_token`
+    2. Click **Authorize** at the top right and enter `Bearer <access_token>` — **you must type the `Bearer ` prefix yourself**. The spec is OpenAPI 2.0 and declares `Authorization` as an apiKey, so the page sends the value verbatim and adds nothing
+    3. Once it expires per `JWT_ACCESS_TTL`, call `POST /api/v1/auth/refresh` (the old token stops working; reusing it wipes every session) and Authorize again
+
+    The same contract can be called over gRPC at /grpcui/ — there you attach `authorization` as metadata instead of as a header
+  license:
+    name: MIT
+  title: User Management API
+  version: "1.0"
+paths:
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: 'An email not in the system, a wrong password, and a malformed
+        email all answer identically: 401 INVALID_CREDENTIALS'
+      parameters:
+      - description: Email and password
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/httpapi.sessionResponse'
+              type: object
+        "400":
+          description: MALFORMED_JSON
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "401":
+          description: INVALID_CREDENTIALS
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      summary: Log in
+      tags:
+      - auth
+  /api/v1/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Every rotation invalidates the old token — presenting an already-rotated
+        token wipes every session belonging to that user
+      parameters:
+      - description: The most recent refresh token
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.refreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/httpapi.sessionResponse'
+              type: object
+        "400":
+          description: MALFORMED_JSON
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      summary: Rotate a refresh token
+      tags:
+      - auth
+  /api/v1/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user from a name, an email and a password, then returns
+        the user — no token is returned; get one from /auth/login
+      parameters:
+      - description: The signup details
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.createUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              description: /api/v1/users/{id}
+              type: string
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/httpapi.userResponse'
+              type: object
+        "400":
+          description: MALFORMED_JSON
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "409":
+          description: EMAIL_TAKEN
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "422":
+          description: VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      summary: Sign up
+      tags:
+      - auth
+  /api/v1/users:
+    get:
+      description: Paged by cursor rather than offset, so the data volume does not
+        slow the query down, and no row is duplicated or missed when a write lands
+        in between
+      parameters:
+      - default: 20
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: The next_cursor value from the previous page
+        in: query
+        name: cursor
+        type: string
+      - description: Search by name or email
+        in: query
+        name: query
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/httpapi.userResponse'
+                  type: array
+                meta:
+                  $ref: '#/definitions/httpapi.listMeta'
+              type: object
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "422":
+          description: VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: A duplicate email is caught by MongoDB's unique index rather than
+        by a pre-check, so there is no TOCTOU window
+      parameters:
+      - description: The new user's details
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.createUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              description: /api/v1/users/{id}
+              type: string
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/httpapi.userResponse'
+              type: object
+        "400":
+          description: MALFORMED_JSON
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "409":
+          description: EMAIL_TAKEN
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "422":
+          description: VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create a user
+      tags:
+      - users
+  /api/v1/users/{id}:
+    delete:
+      description: Removes the account and revokes every refresh token it holds. A
+        caller may only delete their own account — any other id answers 403 FORBIDDEN
+      parameters:
+      - description: The user's id (24 hex characters)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted; no response body
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete a user
+      tags:
+      - users
+    get:
+      parameters:
+      - description: The user's id (24 hex characters)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/httpapi.userResponse'
+              type: object
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Read a single user
+      tags:
+      - users
+    patch:
+      consumes:
+      - application/json
+      description: Every field in the body is optional; send only the ones you want
+        to change. A caller may only change their own account — any other id answers
+        403 FORBIDDEN, whether or not it exists
+      parameters:
+      - description: The user's id (24 hex characters)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The fields to change
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.updateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/respond.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/httpapi.userResponse'
+              type: object
+        "400":
+          description: MALFORMED_JSON
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "401":
+          description: UNAUTHORIZED
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "409":
+          description: EMAIL_TAKEN
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+        "422":
+          description: VALIDATION_ERROR
+          schema:
+            $ref: '#/definitions/respond.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Update a user
+      tags:
+      - users
+  /healthz:
+    get:
+      description: Answers 200 for as long as the process can serve requests; does
+        not touch MongoDB
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"status\":\"ok\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: liveness probe
+      tags:
+      - system
+  /readyz:
+    get:
+      description: Answers 503 {"status":"draining"} once shutdown has begun, so the
+        load balancer stops sending work before the listener closes; otherwise pings
+        MongoDB with a 2-second timeout and answers 503 {"status":"unavailable"} when
+        it cannot be reached
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"status\":\"ok\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: '{\"status\":\"unavailable\"} or {\"status\":\"draining\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: readiness probe
+      tags:
+      - system
+securityDefinitions:
+  BearerAuth:
+    description: Enter the value as "Bearer <access_token>", where access_token comes
+      from /api/v1/auth/login
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
+tags:
+- description: Signing up, logging in, and rotating refresh tokens
+  name: auth
+- description: User CRUD; every route requires an access token
+  name: users
+- description: Liveness and readiness probes
+  name: system
