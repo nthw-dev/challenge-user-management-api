@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "github.com/nthw-dev/user-management-api/internal/adapter/inbound/grpc/gen/user/v1;userv1";
+
+import "user/v1/user.proto";
+
+// AuthService is separate from UserService for the same reason the REST side separates /auth from /users:
+// the methods in here are callable without a token — because they are where a token comes from.
+//
+// Every UserService method requires the metadata "authorization: Bearer <access_token>",
+// and the access_token in it comes from Login, here.
+service AuthService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+}
+
+message RegisterRequest {
+  string name = 1;
+  string email = 2;
+  string password = 3;
+}
+
+// RegisterResponse deliberately carries no token, exactly like POST /api/v1/auth/register on the REST side.
+// Issuing tokens happens in one place, Login, which is easier to audit and to rate-limit.
+message RegisterResponse {
+  User user = 1;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+// RefreshRequest takes the refresh token obtained from Login — not the access token.
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+// Session is what both Login and Refresh hand back — the same thing, so it is the same message.
+// Its shape matches the REST side's session object field for field.
+message Session {
+  string access_token = 1;
+  // token_type is fixed at "Bearer" — prepend it to access_token to form the value of the "authorization" metadata.
+  string token_type = 2;
+  // expires_in is the access_token's remaining lifetime, in seconds.
+  int64 expires_in = 3;
+  string refresh_token = 4;
+  User user = 5;
+}
+
+message LoginResponse {
+  Session session = 1;
+}
+
+// RefreshResponse carries a whole new Session: a single rotation yields both a new access token and a new refresh token,
+// and the old refresh token stops working.
+message RefreshResponse {
+  Session session = 1;
+}

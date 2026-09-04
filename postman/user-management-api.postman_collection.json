@@ -1,0 +1,1465 @@
+{
+  "info": {
+    "_postman_id": "1c7a5d20-8b4e-4f31-9a62-3d5e7f0a1b20",
+    "name": "user-management-api — REST",
+    "description": "REST collection for the user-management API. Start the server with `make up`, select the **user-management-api — local** environment, then **just hit Send** — a pre-request script registers, logs in and attaches `Authorization: Bearer …` for you.\n\nFolders are ordered, so the Collection Runner (or `make postman`) can run the lot; folder 5 cleans up so it is re-runnable.\n\n- `POST /auth/register` returns a user but **no token** — a login always follows it.\n- No roles: PATCH/DELETE work on your own id only, anything else is `403`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// ---------------------------------------------------------------------------",
+          "// Auto-auth. Runs before every request in this collection.",
+          "//",
+          "//   1. Seeds a unique set of credentials the first time it runs.",
+          "//   2. On any request that needs a token, makes sure a fresh one is stored",
+          "//      (logging in, and registering first if that account does not exist yet).",
+          "//",
+          "// The Authorization header itself is attached by the collection-level Bearer",
+          "// auth (value {{access_token}}); this script only keeps that variable current.",
+          "// ---------------------------------------------------------------------------",
+          "",
+          "// Write to the active environment when there is one, so the values survive a",
+          "// restart and stay out of the committed collection file.",
+          "function setVar(key, value) {",
+          "    if (pm.environment.name) {",
+          "        pm.environment.set(key, String(value));",
+          "    } else {",
+          "        pm.collectionVariables.set(key, String(value));",
+          "    }",
+          "}",
+          "",
+          "function getVar(key) {",
+          "    const v = pm.variables.get(key);",
+          "    return (v === undefined || v === null) ? '' : String(v);",
+          "}",
+          "",
+          "// --- 1. seed credentials -------------------------------------------------",
+          "",
+          "if (!getVar('email')) {",
+          "    setVar('email', 'postman+' + Date.now() + '@example.com');",
+          "}",
+          "if (!getVar('password')) {",
+          "    // >= 8 runes and not in the server's common-password blacklist.",
+          "    setVar('password', 'Str0ng-Passw0rd!');",
+          "}",
+          "if (!getVar('name')) {",
+          "    setVar('name', 'Postman Tester');",
+          "}",
+          "",
+          "// --- 2. make sure we hold a usable access token ---------------------------",
+          "",
+          "// Endpoints that must never be called with a token attached, or that would",
+          "// recurse into this very script.",
+          "const PUBLIC_PATHS = [",
+          "    '/api/v1/auth/register',",
+          "    '/api/v1/auth/login',",
+          "    '/api/v1/auth/refresh',",
+          "    '/healthz',",
+          "    '/readyz',",
+          "    '/metrics'",
+          "];",
+          "",
+          "let path = '';",
+          "try {",
+          "    path = pm.request.url.getPath();",
+          "} catch (e) {",
+          "    path = String(pm.request.url);",
+          "}",
+          "",
+          "const isPublic = PUBLIC_PATHS.some(function (p) { return path.indexOf(p) !== -1; });",
+          "const expiresAt = Number(getVar('token_expires_at') || 0);",
+          "const stillValid = getVar('access_token') !== '' && Date.now() < expiresAt - 30000;",
+          "",
+          "if (isPublic || stillValid) {",
+          "    // Nothing to do — Postman continues with the request immediately.",
+          "} else {",
+          "    ensureSession();",
+          "}",
+          "",
+          "function baseUrl() {",
+          "    return getVar('baseUrl') || 'http://localhost:8080';",
+          "}",
+          "",
+          "function jsonPost(pathname, payload, cb) {",
+          "    pm.sendRequest({",
+          "        url: baseUrl() + pathname,",
+          "        method: 'POST',",
+          "        header: { 'Content-Type': 'application/json' },",
+          "        body: { mode: 'raw', raw: JSON.stringify(payload) }",
+          "    }, cb);",
+          "}",
+          "",
+          "function saveSession(res) {",
+          "    const data = res.json().data;",
+          "    setVar('access_token', data.access_token);",
+          "    setVar('refresh_token', data.refresh_token);",
+          "    setVar('token_expires_at', Date.now() + (Number(data.expires_in) * 1000));",
+          "    setVar('user_id', data.user.id);",
+          "    console.log('[auto-auth] signed in as ' + data.user.email + ' (' + data.user.id + ')');",
+          "}",
+          "",
+          "function login(cb) {",
+          "    jsonPost('/api/v1/auth/login', { email: getVar('email'), password: getVar('password') }, cb);",
+          "}",
+          "",
+          "function ensureSession() {",
+          "    login(function (err, res) {",
+          "        if (!err && res && res.code === 200) {",
+          "            saveSession(res);",
+          "            return;",
+          "        }",
+          "",
+          "        // No such account yet (401 INVALID_CREDENTIALS) — create it, then log in.",
+          "        jsonPost('/api/v1/auth/register', {",
+          "            name: getVar('name'),",
+          "            email: getVar('email'),",
+          "            password: getVar('password')",
+          "        }, function (regErr, regRes) {",
+          "            if (regErr) {",
+          "                console.error('[auto-auth] register failed — is the server up? ' + regErr);",
+          "                return;",
+          "            }",
+          "            if (regRes.code !== 201 && regRes.code !== 409) {",
+          "                console.error('[auto-auth] register returned ' + regRes.code + ': ' + regRes.text());",
+          "                return;",
+          "            }",
+          "            login(function (err2, res2) {",
+          "                if (!err2 && res2 && res2.code === 200) {",
+          "                    saveSession(res2);",
+          "                } else {",
+          "                    console.error('[auto-auth] login failed after register: ' +",
+          "                        (err2 || (res2.code + ' ' + res2.text())));",
+          "                }",
+          "            });",
+          "        });",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "grpcUrl",
+      "value": "localhost:9090",
+      "type": "string"
+    },
+    {
+      "key": "name",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token_expires_at",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "other_user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "other_user_email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "other_access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "next_cursor",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health",
+      "description": "Liveness and readiness. Both are public and answer a flat body, not the `{\"data\": ...}` envelope.",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Healthz",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            },
+            "description": "Liveness probe. Always 200 while the process is alive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('status is ok', function () {",
+                  "    pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});",
+                  "pm.test('X-Request-ID is echoed back', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Request-ID')).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Readyz",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/readyz",
+              "host": ["{{baseUrl}}"],
+              "path": ["readyz"]
+            },
+            "description": "Readiness probe — pings MongoDB. 503 with `{\"status\":\"unavailable\"}` when the database is unreachable, or `{\"status\":\"draining\"}` during shutdown."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK — MongoDB reachable', function () { pm.response.to.have.status(200); });",
+                  "pm.test('status is ok', function () {",
+                  "    pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Auth",
+      "description": "Public endpoints. `register` creates the account but returns **no token** — you always log in afterwards. `refresh` rotates: the refresh token you send is revoked and a brand-new pair comes back.",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Creates a user. `201` with `Location: /api/v1/users/{id}` and `{\"data\": user}` — no token.\n\nIf the account was already created by the auto-auth script (or by a previous run) this answers `409 EMAIL_TAKEN`, which the test accepts as a valid outcome."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function setVar(k, v) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, String(v)); }",
+                  "    else { pm.collectionVariables.set(k, String(v)); }",
+                  "}",
+                  "",
+                  "pm.test('201 Created, or 409 if the account already exists', function () {",
+                  "    pm.expect([201, 409]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    const user = pm.response.json().data;",
+                  "",
+                  "    pm.test('returns the created user', function () {",
+                  "        pm.expect(user).to.have.all.keys('id', 'name', 'email', 'created_at', 'updated_at');",
+                  "        pm.expect(user.email).to.eql(pm.variables.get('email').toLowerCase());",
+                  "    });",
+                  "",
+                  "    pm.test('never leaks a password field', function () {",
+                  "        pm.expect(pm.response.text()).to.not.include('password');",
+                  "    });",
+                  "",
+                  "    pm.test('Location header points at the new user', function () {",
+                  "        pm.expect(pm.response.headers.get('Location')).to.eql('/api/v1/users/' + user.id);",
+                  "    });",
+                  "",
+                  "    pm.test('no token is issued by register', function () {",
+                  "        pm.expect(pm.response.text()).to.not.include('access_token');",
+                  "    });",
+                  "",
+                  "    setVar('user_id', user.id);",
+                  "} else {",
+                  "    pm.test('409 is EMAIL_TAKEN', function () {",
+                  "        pm.expect(pm.response.json().error.code).to.eql('EMAIL_TAKEN');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Exchanges email + password for a session. The test script saves `access_token`, `refresh_token`, `token_expires_at` and `user_id`, so every later request is authenticated.\n\nThe access token is an HS256 JWT (15m by default); the refresh token is 64 hex characters (168h)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function setVar(k, v) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, String(v)); }",
+                  "    else { pm.collectionVariables.set(k, String(v)); }",
+                  "}",
+                  "",
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const s = pm.response.json().data;",
+                  "",
+                  "pm.test('returns a full session', function () {",
+                  "    pm.expect(s).to.have.all.keys('access_token', 'token_type', 'expires_in', 'refresh_token', 'user');",
+                  "    pm.expect(s.token_type).to.eql('Bearer');",
+                  "    pm.expect(s.expires_in).to.be.above(0);",
+                  "});",
+                  "",
+                  "pm.test('access token is a JWT', function () {",
+                  "    pm.expect(s.access_token.split('.')).to.have.lengthOf(3);",
+                  "});",
+                  "",
+                  "pm.test('refresh token is 64 hex characters', function () {",
+                  "    pm.expect(s.refresh_token).to.match(/^[0-9a-f]{64}$/);",
+                  "});",
+                  "",
+                  "setVar('access_token', s.access_token);",
+                  "setVar('refresh_token', s.refresh_token);",
+                  "setVar('token_expires_at', Date.now() + (Number(s.expires_in) * 1000));",
+                  "setVar('user_id', s.user.id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            },
+            "description": "Rotates the session. The refresh token you send is revoked immediately and a whole new pair is returned — the saved variables are overwritten with it.\n\nReplaying an already-rotated token is treated as theft: every session of that user is wiped."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function setVar(k, v) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, String(v)); }",
+                  "    else { pm.collectionVariables.set(k, String(v)); }",
+                  "}",
+                  "",
+                  "const previousRefresh = pm.variables.get('refresh_token');",
+                  "",
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const s = pm.response.json().data;",
+                  "",
+                  "pm.test('the refresh token was rotated', function () {",
+                  "    pm.expect(s.refresh_token).to.not.eql(previousRefresh);",
+                  "});",
+                  "",
+                  "pm.test('a new access token came back', function () {",
+                  "    pm.expect(s.access_token.split('.')).to.have.lengthOf(3);",
+                  "    pm.expect(s.token_type).to.eql('Bearer');",
+                  "});",
+                  "",
+                  "setVar('access_token', s.access_token);",
+                  "setVar('refresh_token', s.refresh_token);",
+                  "setVar('token_expires_at', Date.now() + (Number(s.expires_in) * 1000));",
+                  "setVar('user_id', s.user.id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Users",
+      "description": "Authenticated endpoints. The `Authorization: Bearer {{access_token}}` header is inherited from the collection — nothing to set by hand.",
+      "item": [
+        {
+          "name": "Create user (a second account)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Second Account\",\n  \"email\": \"{{other_user_email}}\",\n  \"password\": \"Str0ng-Passw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"]
+            },
+            "description": "Same body as `register`, but requires a token. Creates a **second** account whose id is saved as `other_user_id` — the 403 test later tries to modify it, which is how the self-only rule is demonstrated.\n\nThe email is regenerated on every send, so this never collides."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Always a fresh address, so re-running never hits EMAIL_TAKEN.",
+                  "const email = 'postman-second+' + Date.now() + '@example.com';",
+                  "if (pm.environment.name) { pm.environment.set('other_user_email', email); }",
+                  "else { pm.collectionVariables.set('other_user_email', email); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function setVar(k, v) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, String(v)); }",
+                  "    else { pm.collectionVariables.set(k, String(v)); }",
+                  "}",
+                  "",
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "",
+                  "const user = pm.response.json().data;",
+                  "",
+                  "pm.test('returns the second user', function () {",
+                  "    pm.expect(user.id).to.match(/^[0-9a-f]{24}$/);",
+                  "    pm.expect(user.email).to.eql(pm.variables.get('other_user_email'));",
+                  "});",
+                  "",
+                  "setVar('other_user_id', user.id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"]
+            },
+            "description": "Default page: `limit=20`. Returns `{\"data\": [...], \"meta\": {\"limit\", \"next_cursor\", \"has_more\"}}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('data is an array of users', function () {",
+                  "    pm.expect(body.data).to.be.an('array');",
+                  "    pm.expect(body.data.length).to.be.at.least(2);",
+                  "    pm.expect(body.data[0]).to.have.all.keys('id', 'name', 'email', 'created_at', 'updated_at');",
+                  "});",
+                  "",
+                  "pm.test('meta describes the page', function () {",
+                  "    pm.expect(body.meta).to.have.all.keys('limit', 'next_cursor', 'has_more');",
+                  "    pm.expect(body.meta.limit).to.eql(20);",
+                  "});",
+                  "",
+                  "pm.test('no password hash anywhere in the payload', function () {",
+                  "    pm.expect(pm.response.text()).to.not.include('password');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List users — first page (limit=1)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users?limit=1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1",
+                  "description": "1..100, default 20"
+                }
+              ]
+            },
+            "description": "Keyset pagination, page 1. Saves `meta.next_cursor` into the `next_cursor` variable for the next request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function setVar(k, v) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, String(v)); }",
+                  "    else { pm.collectionVariables.set(k, String(v)); }",
+                  "}",
+                  "",
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('exactly one user came back', function () {",
+                  "    pm.expect(body.data).to.have.lengthOf(1);",
+                  "    pm.expect(body.meta.limit).to.eql(1);",
+                  "});",
+                  "",
+                  "pm.test('there is another page', function () {",
+                  "    pm.expect(body.meta.has_more).to.be.true;",
+                  "    pm.expect(body.meta.next_cursor).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "setVar('next_cursor', body.meta.next_cursor || '');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List users — next page (cursor)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users?limit=1&cursor={{next_cursor}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{next_cursor}}",
+                  "description": "the next_cursor returned by the previous page"
+                }
+              ]
+            },
+            "description": "Page 2, using the cursor saved by the previous request. Feed `meta.next_cursor` back in until `has_more` is false."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function setVar(k, v) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, String(v)); }",
+                  "    else { pm.collectionVariables.set(k, String(v)); }",
+                  "}",
+                  "",
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('a page came back', function () {",
+                  "    pm.expect(body.data).to.be.an('array');",
+                  "    pm.expect(body.data.length).to.be.at.most(1);",
+                  "});",
+                  "",
+                  "setVar('next_cursor', body.meta.next_cursor || '');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List users — search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users?query=postman",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "postman",
+                  "description": "case-insensitive substring of name or email"
+                }
+              ]
+            },
+            "description": "`query` is a case-insensitive substring match against name **or** email."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const users = pm.response.json().data;",
+                  "",
+                  "pm.test('every hit actually matches the query', function () {",
+                  "    pm.expect(users.length).to.be.at.least(1);",
+                  "    users.forEach(function (u) {",
+                  "        const haystack = (u.name + ' ' + u.email).toLowerCase();",
+                  "        pm.expect(haystack).to.include('postman');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get user by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            },
+            "description": "Reads one user. `{{user_id}}` is your own id, saved at login. Any authenticated caller may read any user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const user = pm.response.json().data;",
+                  "",
+                  "pm.test('it is the user we asked for', function () {",
+                  "    pm.expect(user.id).to.eql(pm.variables.get('user_id'));",
+                  "});",
+                  "",
+                  "pm.test('timestamps are RFC3339 UTC', function () {",
+                  "    pm.expect(user.created_at).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update own user (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Tester (renamed)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            },
+            "description": "Partial update. Send only the fields you want changed — `name`, `email`, or both. Omitting a field leaves it untouched; an empty body is `422`.\n\nOnly your own id is allowed; see the 403 case in the *Error cases* folder."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "const user = pm.response.json().data;",
+                  "",
+                  "pm.test('the name was changed', function () {",
+                  "    pm.expect(user.name).to.eql('Postman Tester (renamed)');",
+                  "});",
+                  "",
+                  "pm.test('the email was left untouched', function () {",
+                  "    pm.expect(user.email).to.eql(pm.variables.get('email').toLowerCase());",
+                  "});",
+                  "",
+                  "pm.test('updated_at moved past created_at', function () {",
+                  "    pm.expect(new Date(user.updated_at).getTime()).to.be.at.least(new Date(user.created_at).getTime());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Error cases",
+      "description": "Every failure mode the API defines, each asserting the exact `error.code`. Error bodies are `{\"error\": {\"code\", \"message\", \"details\"}, \"request_id\"}`.",
+      "item": [
+        {
+          "name": "401 — no token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"]
+            },
+            "description": "Auth is switched off on this request only, so no `Authorization` header is sent. Also checks the `WWW-Authenticate` challenge."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('code is UNAUTHORIZED', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('UNAUTHORIZED');",
+                  "});",
+                  "pm.test('WWW-Authenticate challenge is present', function () {",
+                  "    pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('Bearer');",
+                  "});",
+                  "pm.test('the error carries a request_id', function () {",
+                  "    pm.expect(pm.response.json().request_id).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "401 — wrong password",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Unknown email, wrong password and a malformed email all answer the same `401 INVALID_CREDENTIALS` — the API never reveals whether an account exists."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('code is INVALID_CREDENTIALS', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('INVALID_CREDENTIALS');",
+                  "});",
+                  "pm.test('does not reveal whether the account exists', function () {",
+                  "    pm.expect(pm.response.json().error.message.toLowerCase()).to.not.include('not found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "403 — modify someone else",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Hijacked\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{other_user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{other_user_id}}"]
+            },
+            "description": "The only authorization rule in the service: PATCH and DELETE work on your own id only. There are no roles — a second account cannot be edited even by the account that created it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('code is FORBIDDEN', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('FORBIDDEN');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "404 — unknown user id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/000000000000000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "000000000000000000000000"]
+            },
+            "description": "A well-formed 24-hex ObjectId that no user has."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('code is USER_NOT_FOUND', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('USER_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "409 — email already taken",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Duplicate\",\n  \"email\": \"{{email}}\",\n  \"password\": \"Str0ng-Passw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Registers the address that already belongs to the current session."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });",
+                  "pm.test('code is EMAIL_TAKEN', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('EMAIL_TAKEN');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "422 — password too short",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Weak\",\n  \"email\": \"weak-password@example.com\",\n  \"password\": \"short\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Passwords must be at least 8 runes and must not be one of the well-known weak ones (`password`, `12345678`, `p@ssw0rd`, …). Failures come back with a per-field `details` array."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });",
+                  "",
+                  "const err = pm.response.json().error;",
+                  "",
+                  "pm.test('code is VALIDATION_ERROR', function () {",
+                  "    pm.expect(err.code).to.eql('VALIDATION_ERROR');",
+                  "});",
+                  "",
+                  "pm.test('details point at the password field', function () {",
+                  "    pm.expect(err.details).to.be.an('array').that.is.not.empty;",
+                  "    pm.expect(err.details.map(function (d) { return d.field; })).to.include('password');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "422 — limit above 100",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users?limit=101",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "101"
+                }
+              ]
+            },
+            "description": "`limit` must be an integer in 1..100."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });",
+                  "",
+                  "const err = pm.response.json().error;",
+                  "",
+                  "pm.test('code is VALIDATION_ERROR on the limit field', function () {",
+                  "    pm.expect(err.code).to.eql('VALIDATION_ERROR');",
+                  "    pm.expect(err.details.map(function (d) { return d.field; })).to.include('limit');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "422 — malformed user id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/not-an-object-id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "not-an-object-id"]
+            },
+            "description": "Ids must be 24 hex characters. A malformed one is rejected before the database is touched — that is a validation error, not a 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });",
+                  "",
+                  "const err = pm.response.json().error;",
+                  "",
+                  "pm.test('code is VALIDATION_ERROR on the id field', function () {",
+                  "    pm.expect(err.code).to.eql('VALIDATION_ERROR');",
+                  "    pm.expect(err.details.map(function (d) { return d.field; })).to.include('id');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "422 — empty PATCH body",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            },
+            "description": "A PATCH has to change something — at least one of `name` or `email`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });",
+                  "",
+                  "const err = pm.response.json().error;",
+                  "",
+                  "pm.test('code is VALIDATION_ERROR on the body', function () {",
+                  "    pm.expect(err.code).to.eql('VALIDATION_ERROR');",
+                  "    pm.expect(err.details.map(function (d) { return d.field; })).to.include('body');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "400 — malformed JSON",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\": \"broken\", \"email\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Truncated JSON. Decoding fails before validation, so this is `400 MALFORMED_JSON`, not `422`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('code is MALFORMED_JSON', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('MALFORMED_JSON');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "404 — unknown route",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nope",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "nope"]
+            },
+            "description": "Even a route that does not exist answers in the error envelope."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('code is NOT_FOUND', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "405 — wrong method",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "`/auth/login` exists, but only for POST."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('405 Method Not Allowed', function () { pm.response.to.have.status(405); });",
+                  "pm.test('code is METHOD_NOT_ALLOWED', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('METHOD_NOT_ALLOWED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5. Cleanup",
+      "description": "Deletes both accounts the run created, so the collection can be run again from scratch. Run this last — deleting your own account invalidates the stored token, and the auto-auth script will simply register again on the next run.",
+      "item": [
+        {
+          "name": "Delete the second account",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{other_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{other_user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{other_user_id}}"]
+            },
+            "description": "Self-only deletion means the second account has to delete itself — the pre-request script logs in as it and uses *its* token for this one request."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Log in as the second account so it can delete itself.",
+                  "const base = pm.variables.get('baseUrl') || 'http://localhost:8080';",
+                  "",
+                  "pm.sendRequest({",
+                  "    url: base + '/api/v1/auth/login',",
+                  "    method: 'POST',",
+                  "    header: { 'Content-Type': 'application/json' },",
+                  "    body: {",
+                  "        mode: 'raw',",
+                  "        raw: JSON.stringify({",
+                  "            email: pm.variables.get('other_user_email'),",
+                  "            password: 'Str0ng-Passw0rd!'",
+                  "        })",
+                  "    }",
+                  "}, function (err, res) {",
+                  "    if (err || res.code !== 200) {",
+                  "        console.error('[cleanup] could not sign in as the second account');",
+                  "        return;",
+                  "    }",
+                  "    const token = res.json().data.access_token;",
+                  "    if (pm.environment.name) { pm.environment.set('other_access_token', token); }",
+                  "    else { pm.collectionVariables.set('other_access_token', token); }",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', function () { pm.response.to.have.status(204); });",
+                  "pm.test('the body is empty', function () {",
+                  "    pm.expect(pm.response.text()).to.be.empty;",
+                  "});",
+                  "",
+                  "function clear(k) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, ''); }",
+                  "    else { pm.collectionVariables.set(k, ''); }",
+                  "}",
+                  "clear('other_access_token');",
+                  "clear('other_user_id');",
+                  "clear('other_user_email');"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Delete own account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{user_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            },
+            "description": "`204 No Content`. Deleting a user also revokes every refresh token they hold.\n\nThe test then clears the stored session, so the next run of the collection registers a fresh account instead of trying to use a token for a user that no longer exists."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', function () { pm.response.to.have.status(204); });",
+                  "pm.test('the body is empty', function () {",
+                  "    pm.expect(pm.response.text()).to.be.empty;",
+                  "});",
+                  "",
+                  "// Reset the session so a re-run starts clean.",
+                  "function clear(k) {",
+                  "    if (pm.environment.name) { pm.environment.set(k, ''); }",
+                  "    else { pm.collectionVariables.set(k, ''); }",
+                  "}",
+                  "clear('access_token');",
+                  "clear('refresh_token');",
+                  "clear('user_id');",
+                  "clear('next_cursor');",
+                  "if (pm.environment.name) { pm.environment.set('token_expires_at', '0'); }",
+                  "else { pm.collectionVariables.set('token_expires_at', '0'); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

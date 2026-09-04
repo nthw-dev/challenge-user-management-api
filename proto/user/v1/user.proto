@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "github.com/nthw-dev/user-management-api/internal/adapter/inbound/grpc/gen/user/v1;userv1";
+
+import "google/protobuf/timestamp.proto";
+
+// UserService is the second adapter on top of the same core.
+// It has every method /api/v1/users has on the REST side, in the same order.
+//
+// Every method requires the metadata "authorization: Bearer <access_token>",
+// which can be obtained from AuthService in auth.proto.
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  // There is deliberately no password field in this contract.
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+  string password = 3;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message ListUsersRequest {
+  // limit is optional to tell "not sent" (use the default) apart from "sent as 0" (against the rules).
+  // With a bare int32, zero would collapse those two meanings into one.
+  optional int32 limit = 1;
+  // cursor is the next_cursor value from the previous page — paging is keyset, not offset.
+  string cursor = 2;
+  // query searches by name or email; the same name the REST side uses, ?query= on GET /api/v1/users.
+  string query = 3;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  ListMeta meta = 2;
+}
+
+message ListMeta {
+  int32 limit = 1;
+  // next_cursor has no value once the last page has been read; equivalent to null on the REST side.
+  optional string next_cursor = 2;
+  bool has_more = 3;
+}
+
+// UpdateUserRequest uses optional to tell "this field was not sent" apart from "sent as an empty value",
+// the distinction a partial update has to be able to make, like the pointers in updateUserRequest on the REST side.
+message UpdateUserRequest {
+  string id = 1;
+  optional string name = 2;
+  optional string email = 3;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+}
+
+message DeleteUserRequest {
+  string id = 1;
+}
+
+// DeleteUserResponse is deliberately empty; equivalent to 204 No Content on the REST side.
+// google.protobuf.Empty is avoided so a field can be added later without changing the method's contract.
+message DeleteUserResponse {}
