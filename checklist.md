@@ -119,14 +119,4 @@ Coverage (`make cover-report`, 2026-09-04): domain **97.1%**, app **97.3%**, han
 - **Idiomatic Go** — `log/slog`, sentinel errors + typed `ErrValidation`, `context` first, small consumer-side interfaces, no globals, `errgroup`, table-driven subtests, build tags.
 - **Bonus** — all six.
 
-### Knowingly stopped short
-
-- ⬜ **No roles** — self-only authorization; an admin would extend `requireSelf` and add a claim.
-- ⬜ **No rate limiting** — belongs at the ingress or in Redis.
-- ⬜ **No email verification / password reset** — needs a mail port, outside the brief.
-- ⬜ **No access-token denylist** — `jti` is there if needed; `tokens_valid_after` is cheaper.
-- ⬜ **No distributed tracing** — a request id on every line is enough for one service.
-- ⬜ **No migration tool** — indexes at boot; would stall a deploy on a big collection.
-- ⬜ **`?query=` is `$regex`** — fine here; a text index or Atlas Search for real.
-
 Reasons: [docs/design-decisions.md](docs/design-decisions.md).
