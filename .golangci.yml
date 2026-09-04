@@ -1,0 +1,92 @@
+# golangci-lint v2 configuration (`golangci-lint migrate` produced the skeleton; the comments are ours).
+# v2 enables errcheck, govet, ineffassign, staticcheck and unused by default — only the extras are listed.
+version: "2"
+
+run:
+  build-tags:
+    - integration
+    - dev
+
+linters:
+  enable:
+    - bodyclose
+    - depguard
+    - gosec
+    - misspell
+    - noctx
+    - revive
+  settings:
+    errcheck:
+      check-type-assertions: true
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    # depguard is the architecture in executable form: the dependency arrows point inward, and nothing else.
+    # The domain test at internal/domain/user/deps_test.go remains as a second guard that needs no linter to run.
+    depguard:
+      rules:
+        domain:
+          list-mode: strict
+          files:
+            - "**/internal/domain/**"
+          allow:
+            - $gostd
+            - github.com/nthw-dev/user-management-api/internal/domain
+            - github.com/stretchr/testify
+        app:
+          list-mode: strict
+          files:
+            - "**/internal/app/**"
+          allow:
+            - $gostd
+            - github.com/nthw-dev/user-management-api/internal/domain
+            - github.com/nthw-dev/user-management-api/internal/app
+            - github.com/stretchr/testify
+            # Ginkgo and Gomega: the BDD specs in internal/app read the use cases' interactions with their ports (test-only).
+            - github.com/onsi/ginkgo
+            - github.com/onsi/gomega
+        inbound:
+          files:
+            - "**/internal/adapter/inbound/**"
+          deny:
+            - pkg: github.com/nthw-dev/user-management-api/internal/adapter/outbound
+              desc: an inbound adapter reaches the outside only through the ports in internal/app
+        outbound:
+          files:
+            - "**/internal/adapter/outbound/**"
+          deny:
+            - pkg: github.com/nthw-dev/user-management-api/internal/adapter/inbound
+              desc: an outbound adapter must not know how a request arrived
+        platform:
+          files:
+            - "**/internal/platform/**"
+          deny:
+            - pkg: github.com/nthw-dev/user-management-api/internal/adapter
+              desc: platform packages are cross-cutting utilities and must not depend on any adapter
+            - pkg: github.com/nthw-dev/user-management-api/internal/app
+              desc: platform packages are cross-cutting utilities and must not depend on the core
+  exclusions:
+    generated: lax
+    # The presets reproduce what v1 excluded by default, so the move to v2 changed no verdict.
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # In tests, ignoring an error unrelated to what is being checked is normal, and a test request needs no context.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - noctx
+      # Ginkgo and Gomega are written with dot imports by design — Describe/It/Expect read as a sentence, not as a package.
+      - path: _test\.go
+        linters:
+          - revive
+        text: dot imports
+
+formatters:
+  exclusions:
+    generated: lax

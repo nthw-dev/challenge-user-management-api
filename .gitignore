@@ -1,0 +1,13 @@
+.env
+cover.out
+/bin/
+/scripts/logs/
+
+# Local coverage reports (make cover-report)
+/coverage/
+
+# The walkthrough scripts in scripts/ are Python
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

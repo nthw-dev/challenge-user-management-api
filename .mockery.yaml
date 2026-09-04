@@ -1,0 +1,16 @@
+# Mockery (v3) generates a testify/mock double for every port in internal/app/ports.go.
+#
+# The mocks live next to the hand-written fakes in internal/app/apptest, because they are the same kind of thing:
+# test doubles shared by every package. The fakes hold state (an in-memory repository); the mocks hold expectations,
+# which is what a test wants when the *interaction* matters — call order, arguments, a call that must not happen.
+#
+#   make mocks   — regenerate (CI regenerates with the pinned version and diffs, so commit the output)
+template: testify
+dir: internal/app/apptest/mocks
+pkgname: mocks
+structname: "{{.InterfaceName}}"
+filename: "{{.InterfaceName | snakecase}}.go"
+packages:
+  github.com/nthw-dev/user-management-api/internal/app:
+    config:
+      all: true
